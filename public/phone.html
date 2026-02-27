@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>SubSignal — Phone</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="phone-toast" id="phoneToast">Sent!</div>
+
+  <div class="phone-layout">
+    <div class="phone-header">
+      <h1>Sub<span>Signal</span></h1>
+      <div class="phone-session">Session: <code id="sessionCode">...</code></div>
+    </div>
+
+    <div class="connection-bar" id="connBar">
+      <span class="dot"></span>
+      <span id="connLabel">Connecting...</span>
+    </div>
+
+    <div class="listen-area">
+      <button class="hold-btn" id="holdBtn">
+        <span class="icon">🎙</span>
+        <span>Hold to Listen</span>
+      </button>
+
+      <div class="transcript-box">
+        <div class="label">Transcript</div>
+        <div class="text placeholder" id="transcriptText">Waiting for input...</div>
+      </div>
+
+      <div class="match-box">
+        <div class="label">Matched Intent</div>
+        <div class="trigger" id="matchTrigger"></div>
+        <div class="reply" id="matchReply"></div>
+      </div>
+
+      <div class="fallback-area" id="fallbackArea">
+        <div class="label">Or tap a trigger manually</div>
+        <div class="fallback-btns">
+          <button class="fallback-btn" data-trigger="mm">
+            Mm
+            <span class="sub">Follow up later</span>
+          </button>
+          <button class="fallback-btn" data-trigger="uh">
+            Uh
+            <span class="sub">Give me 10 mins</span>
+          </button>
+          <button class="fallback-btn" data-trigger="tap">
+            Tap
+            <span class="sub">Will call back</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    const TRIGGERS = {
+      mm:  'On it — will follow up right after this meeting.',
+      hmm: 'On it — will follow up right after this meeting.',
+      uh:  'In a meeting — give me 10 mins.',
+      um:  'In a meeting — give me 10 mins.',
+      tap: "Can't talk — will call you back ASAP.",
+    };
+
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session');
+
+    const $sessionCode   = document.getElementById('sessionCode');
+    const $connBar       = document.getElementById('connBar');
+    const $connLabel     = document.getElementById('connLabel');
+    const $holdBtn       = document.getElementById('holdBtn');
+    const $transcriptText= document.getElementById('transcriptText');
+    const $matchTrigger  = document.getElementById('matchTrigger');
+    const $matchReply    = document.getElementById('matchReply');
+    const $phoneToast    = document.getElementById('phoneToast');
+    const $fallbackArea  = document.getElementById('fallbackArea');
+
+    let recognition = null;
+    let hasSpeechAPI = false;
+
+    if (!sessionId) {
+      $connLabel.textContent = 'No session ID — scan the QR code on desktop';
+      $holdBtn.disabled = true;
+      $holdBtn.style.opacity = '0.4';
+    } else {
+      $sessionCode.textContent = sessionId;
+      socket.emit('join_session', { sessionId, role: 'phone' });
+
+      socket.on('connect', () => {
+        $connBar.classList.add('connected');
+        $connLabel.textContent = 'Connected';
+      });
+      socket.on('disconnect', () => {
+        $connBar.classList.remove('connected');
+        $connLabel.textContent = 'Disconnected';
+      });
+    }
+
+    function normalize(str) {
+      return str.toLowerCase().trim().replace(/[^a-z\s]/g, '');
+    }
+
+    function matchTrigger(transcript) {
+      const cleaned = normalize(transcript);
+      const words = cleaned.split(/\s+/);
+      for (const word of words) {
+        for (const [key, reply] of Object.entries(TRIGGERS)) {
+          if (word.includes(key)) {
+            return { trigger: key, replyText: reply };
+          }
+        }
+      }
+      return null;
+    }
+
+    function sendIntent(trigger, replyText) {
+      socket.emit('intent', { sessionId, trigger, replyText });
+      $matchTrigger.textContent = `"${trigger}"`;
+      $matchReply.textContent = replyText;
+      showToast(`Sent: "${trigger}"`);
+    }
+
+    function showToast(text) {
+      $phoneToast.textContent = text;
+      $phoneToast.classList.add('show');
+      setTimeout(() => $phoneToast.classList.remove('show'), 2000);
+    }
+
+    // Speech API setup
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      hasSpeechAPI = true;
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        $transcriptText.textContent = transcript || '...';
+        $transcriptText.classList.remove('placeholder');
+
+        const match = matchTrigger(transcript);
+        if (match) {
+          sendIntent(match.trigger, match.replyText);
+          try { recognition.stop(); } catch(e) {}
+          $holdBtn.classList.remove('active');
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.log('Speech error:', event.error);
+        if (event.error !== 'aborted') {
+          $transcriptText.textContent = `Error: ${event.error}`;
+        }
+      };
+
+      recognition.onend = () => {
+        $holdBtn.classList.remove('active');
+      };
+    }
+
+    if (!hasSpeechAPI) {
+      $holdBtn.querySelector('span:last-child').textContent = 'Speech unavailable';
+      $holdBtn.style.borderColor = 'var(--text-dim)';
+      $holdBtn.style.color = 'var(--text-dim)';
+    }
+
+    // Hold-to-listen
+    let holding = false;
+
+    function startListening() {
+      if (!sessionId) return;
+      if (hasSpeechAPI && recognition) {
+        holding = true;
+        $holdBtn.classList.add('active');
+        $transcriptText.textContent = 'Listening...';
+        $transcriptText.classList.remove('placeholder');
+        $matchTrigger.textContent = '';
+        $matchReply.textContent = '';
+        try { recognition.start(); } catch(e) {}
+      }
+    }
+
+    function stopListening() {
+      if (hasSpeechAPI && recognition && holding) {
+        holding = false;
+        $holdBtn.classList.remove('active');
+        try { recognition.stop(); } catch(e) {}
+      }
+    }
+
+    // Mouse events
+    $holdBtn.addEventListener('mousedown', (e) => { e.preventDefault(); startListening(); });
+    $holdBtn.addEventListener('mouseup', stopListening);
+    $holdBtn.addEventListener('mouseleave', stopListening);
+
+    // Touch events
+    $holdBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startListening(); }, { passive: false });
+    $holdBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopListening(); });
+    $holdBtn.addEventListener('touchcancel', stopListening);
+
+    // Fallback buttons
+    document.querySelectorAll('.fallback-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!sessionId) return;
+        const trigger = btn.dataset.trigger;
+        const replyText = TRIGGERS[trigger];
+        sendIntent(trigger, replyText);
+      });
+    });
+  </script>
+</body>
+</html>

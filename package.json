@@ -1,0 +1,18 @@
+{
+  "name": "subsignal",
+  "version": "1.0.0",
+  "description": "Subtle sound-to-intent messaging from phone to desktop during meetings",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["meetings", "real-time", "socket.io", "voice"],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
+  }
+}

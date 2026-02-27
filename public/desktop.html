@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SubSignal — Desktop</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="toast" id="toast">Intent received</div>
+
+  <div class="desktop-layout">
+    <!-- Left: Fake Meeting -->
+    <div class="meeting-panel">
+      <div class="meeting-header">
+        <h1>Sub<span>Signal</span></h1>
+        <div class="session-id-box">
+          Session: <code id="sessionCode">...</code>
+        </div>
+      </div>
+
+      <div class="meeting-fake">
+        <div class="meeting-titlebar">
+          <span class="title">📹 Q3 Sprint Planning</span>
+          <span class="participants">4 participants</span>
+        </div>
+        <div class="meeting-grid">
+          <div class="participant-tile">
+            <div class="avatar">JK</div>
+            <span class="name">Jordan Kim</span>
+          </div>
+          <div class="participant-tile you">
+            <div class="avatar">You</div>
+            <span class="name">You</span>
+          </div>
+          <div class="participant-tile">
+            <div class="avatar">AP</div>
+            <span class="name">Alex Park</span>
+          </div>
+          <div class="participant-tile">
+            <div class="avatar">SR</div>
+            <span class="name">Sam Reyes</span>
+          </div>
+        </div>
+        <div class="meeting-controls">
+          <button class="ctrl-btn" title="Mute">🔇</button>
+          <button class="ctrl-btn" title="Camera">📷</button>
+          <button class="ctrl-btn" title="Screen">🖥</button>
+          <button class="ctrl-btn" title="Chat">💬</button>
+          <button class="ctrl-btn end" title="Leave">✕</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Slack-style Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h2>💬 Messages</h2>
+        <div class="phone-status" id="phoneStatus">
+          <span class="dot"></span>
+          <span id="phoneLabel">Phone not connected</span>
+        </div>
+      </div>
+
+      <div class="messages" id="messages"></div>
+
+      <div class="sidebar-bottom">
+        <button class="btn btn--primary" id="simBtn">
+          💬 Simulate Incoming Message
+        </button>
+        <div class="qr-wrap">
+          <img id="qrImg" src="" alt="QR Code">
+        </div>
+        <div class="qr-label">Scan with phone to connect</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let sessionId = null;
+
+    const $messages  = document.getElementById('messages');
+    const $toast     = document.getElementById('toast');
+    const $simBtn    = document.getElementById('simBtn');
+    const $qrImg     = document.getElementById('qrImg');
+    const $phoneStatus = document.getElementById('phoneStatus');
+    const $phoneLabel  = document.getElementById('phoneLabel');
+    const $sessionCode = document.getElementById('sessionCode');
+
+    const INCOMING_MSGS = [
+      { sender: 'Alex Park', text: 'Hey, can you review the PR when you get a chance?' },
+      { sender: 'Sam Reyes', text: 'Quick question — are we still deploying today?' },
+      { sender: 'Jordan Kim', text: 'Client wants an update on the timeline ASAP' },
+      { sender: 'Alex Park', text: 'Build is failing on staging, need your help' },
+      { sender: 'Sam Reyes', text: 'Can you hop on a call after this meeting?' },
+      { sender: 'Jordan Kim', text: 'Design team needs feedback before EOD' },
+    ];
+    let msgIdx = 0;
+
+    async function init() {
+      const res = await fetch('/api/session');
+      const data = await res.json();
+      sessionId = data.sessionId;
+      $sessionCode.textContent = sessionId;
+
+      socket.emit('join_session', { sessionId, role: 'desktop' });
+
+      const qrRes = await fetch(`/api/qr?sessionId=${sessionId}`);
+      const qrData = await qrRes.json();
+      $qrImg.src = qrData.qrDataUrl;
+    }
+
+    function addMessage(type, text, sender, triggerLabel) {
+      const div = document.createElement('div');
+      div.className = `msg ${type}`;
+      let html = '';
+      if (sender) html += `<div class="sender">${sender}</div>`;
+      html += `<div>${text}</div>`;
+      if (triggerLabel) html += `<span class="trigger-label">🎤 "${triggerLabel}"</span>`;
+      div.innerHTML = html;
+      $messages.appendChild(div);
+      $messages.scrollTop = $messages.scrollHeight;
+    }
+
+    function showToast(text) {
+      $toast.textContent = text;
+      $toast.classList.add('show');
+      setTimeout(() => $toast.classList.remove('show'), 2500);
+    }
+
+    $simBtn.addEventListener('click', () => {
+      const msg = INCOMING_MSGS[msgIdx % INCOMING_MSGS.length];
+      msgIdx++;
+      addMessage('incoming', msg.text, msg.sender);
+    });
+
+    socket.on('phone_connected', ({ count }) => {
+      if (count > 0) {
+        $phoneStatus.classList.add('connected');
+        $phoneLabel.textContent = `Phone connected (${count})`;
+      } else {
+        $phoneStatus.classList.remove('connected');
+        $phoneLabel.textContent = 'Phone not connected';
+      }
+    });
+
+    socket.on('intent_received', ({ trigger, replyText }) => {
+      addMessage('sent', replyText, 'You (auto-reply)', trigger);
+      showToast(`Intent received: "${trigger}"`);
+    });
+
+    init();
+  </script>
+</body>
+</html>
